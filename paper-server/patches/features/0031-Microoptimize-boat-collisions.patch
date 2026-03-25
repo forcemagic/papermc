@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matthew Coal <mate.coalie@gmail.com>
+Date: Sat, 11 Apr 2026 14:22:13 +0200
+Subject: [PATCH] Microoptimize boat collisions
+
+
+diff --git a/net/minecraft/world/entity/EntitySelector.java b/net/minecraft/world/entity/EntitySelector.java
+index 050e1ba6cdc4c50aa188cef88f421a9a6c5f0836..89f848391bc582473a64c77f99fcf65046c42c1c 100644
+--- a/net/minecraft/world/entity/EntitySelector.java
++++ b/net/minecraft/world/entity/EntitySelector.java
+@@ -42,34 +42,33 @@ public final class EntitySelector {
+         return input -> input.distanceToSqr(centerX, centerY, centerZ) <= distanceSqr;
+     }
+ 
++    // Paper start - optimize boat collisions
+     public static Predicate<Entity> pushableBy(final Entity entity) {
+         Team ownTeam = entity.getTeam();
+         Team.CollisionRule ownCollisionRule = ownTeam == null ? Team.CollisionRule.ALWAYS : ownTeam.getCollisionRule();
+-        return (Predicate<Entity>)(ownCollisionRule == Team.CollisionRule.NEVER
+-            ? Predicates.alwaysFalse()
+-            : NO_SPECTATORS.and(
+-                input -> {
+-                    if (!input.isPushable() || !input.canCollideWithBukkit(entity) || !entity.canCollideWithBukkit(input)) { // CraftBukkit - collidable API // Paper - Climbing should not bypass cramming gamerule
+-                        return false;
+-                    } else if (!entity.level().isClientSide() || input instanceof Player player && player.isLocalPlayer()) {
+-                        Team theirTeam = input.getTeam();
+-                        Team.CollisionRule theirCollisionRule = theirTeam == null ? Team.CollisionRule.ALWAYS : theirTeam.getCollisionRule();
+-                        if (theirCollisionRule == Team.CollisionRule.NEVER || (input instanceof Player && !io.papermc.paper.configuration.GlobalConfiguration.get().collisions.enablePlayerCollisions)) { // Paper - Configurable player collision
+-                            return false;
+-                        } else {
+-                            boolean sameTeam = ownTeam != null && ownTeam.isAlliedTo(theirTeam);
+-                            return (ownCollisionRule != Team.CollisionRule.PUSH_OWN_TEAM && theirCollisionRule != Team.CollisionRule.PUSH_OWN_TEAM || !sameTeam)
+-                                && (
+-                                    ownCollisionRule != Team.CollisionRule.PUSH_OTHER_TEAMS && theirCollisionRule != Team.CollisionRule.PUSH_OTHER_TEAMS
+-                                        || sameTeam
+-                                );
+-                        }
+-                    } else {
+-                        return false;
+-                    }
+-                }
+-            ));
++        if (ownCollisionRule == Team.CollisionRule.NEVER) {
++            return Predicates.alwaysFalse();
++        }
++        return input -> {
++            if (input.isSpectator()) return false;
++            if (!input.isPushable()) return false;
++            if (!input.canCollideWithBukkit(entity)) return false; // CraftBukkit - collidable API // Paper - Climbing should not bypass cramming gamerule
++            if (!entity.canCollideWithBukkit(input)) return false;
++            if (entity.level().isClientSide() && !(input instanceof Player p && p.isLocalPlayer())) {
++                return false;
++            }
++            Team theirTeam = input.getTeam();
++            Team.CollisionRule theirCollisionRule = theirTeam == null ? Team.CollisionRule.ALWAYS : theirTeam.getCollisionRule();
++            if (theirCollisionRule == Team.CollisionRule.NEVER) return false;
++            if (input instanceof Player && !io.papermc.paper.configuration.GlobalConfiguration.get().collisions.enablePlayerCollisions) { // Paper - Configurable player collision
++                return false;
++            }
++            boolean sameTeam = ownTeam != null && ownTeam.isAlliedTo(theirTeam);
++            return (ownCollisionRule != Team.CollisionRule.PUSH_OWN_TEAM && theirCollisionRule != Team.CollisionRule.PUSH_OWN_TEAM || !sameTeam)
++                && (ownCollisionRule != Team.CollisionRule.PUSH_OTHER_TEAMS && theirCollisionRule != Team.CollisionRule.PUSH_OTHER_TEAMS || sameTeam);
++        };
+     }
++    // Paper end - optimize boat collisions
+ 
+     public static Predicate<Entity> notRiding(final Entity entity) {
+         return input -> {
+diff --git a/net/minecraft/world/entity/vehicle/boat/AbstractBoat.java b/net/minecraft/world/entity/vehicle/boat/AbstractBoat.java
+index de254df4f13dd1544481fc8a3762ced649930da8..25adadf53530587abb2e26e9c1e353cf875129b1 100644
+--- a/net/minecraft/world/entity/vehicle/boat/AbstractBoat.java
++++ b/net/minecraft/world/entity/vehicle/boat/AbstractBoat.java
+@@ -188,13 +188,13 @@ public abstract class AbstractBoat extends VehicleEntity implements Leashable {
+         if (entity instanceof AbstractBoat) {
+             if (entity.getBoundingBox().minY < this.getBoundingBox().maxY) {
+                 // CraftBukkit start
+-                if (!this.isPassengerOfSameVehicle(entity)) {
+-                    org.bukkit.event.vehicle.VehicleEntityCollisionEvent event = new org.bukkit.event.vehicle.VehicleEntityCollisionEvent(
+-                        (org.bukkit.entity.Vehicle) this.getBukkitEntity(),
+-                        entity.getBukkitEntity()
+-                    );
+-                    if (!event.callEvent()) return;
+-                }
++                // if (!this.isPassengerOfSameVehicle(entity)) {
++                //     org.bukkit.event.vehicle.VehicleEntityCollisionEvent event = new org.bukkit.event.vehicle.VehicleEntityCollisionEvent(
++                //         (org.bukkit.entity.Vehicle) this.getBukkitEntity(),
++                //         entity.getBukkitEntity()
++                //     );
++                //     if (!event.callEvent()) return;
++                // }
+                 // CraftBukkit end
+                 super.push(entity);
+             }
+@@ -234,6 +234,11 @@ public abstract class AbstractBoat extends VehicleEntity implements Leashable {
+         return this.getDirection().getClockWise();
+     }
+ 
++    @Override
++    public net.minecraft.world.scores.@org.jspecify.annotations.Nullable PlayerTeam getTeam() {
++        return null;
++    }
++
+     @Override
+     public void tick() {
+         this.oldStatus = this.status;
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 7034abfaf58bd685e185025a30b24754fd067734..dd4be56724006899e40bc939269c42d2a38c9185 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1759,17 +1759,20 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         return this.getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
+     }
+ 
++    private final List<Entity> cachedEntityList = Lists.newArrayList();
++
+     @Override
+     public List<Entity> getEntities(final @Nullable Entity except, final AABB bb, final Predicate<? super Entity> selector) {
+         Profiler.get().incrementCounter("getEntities");
++
+         // Paper start - rewrite chunk system
+-        final List<Entity> ret = new java.util.ArrayList<>();
++        cachedEntityList.clear();
+ 
+-        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup().getEntities(except, bb, ret, selector);
++        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup().getEntities(except, bb, cachedEntityList, selector);
+ 
+-        ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities((Level)(Object)this, except, bb, selector, ret);
++        ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities((Level)(Object)this, except, bb, selector, cachedEntityList);
+ 
+-        return ret;
++        return List.copyOf(cachedEntityList);
+         // Paper end - rewrite chunk system
+     }
+ 
