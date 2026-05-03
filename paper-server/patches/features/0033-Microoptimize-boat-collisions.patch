@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Matthew Coal <mate.coalie@gmail.com>
-Date: Sat, 11 Apr 2026 14:22:13 +0200
+Date: Tue, 1 Dec 2026 14:37:42 +0100
 Subject: [PATCH] Microoptimize boat collisions
 
 
@@ -104,10 +104,10 @@ index de254df4f13dd1544481fc8a3762ced649930da8..25adadf53530587abb2e26e9c1e353cf
      public void tick() {
          this.oldStatus = this.status;
 diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
-index 7034abfaf58bd685e185025a30b24754fd067734..dd4be56724006899e40bc939269c42d2a38c9185 100644
+index a920a20008cb906def77dbc50db1bb1731cc1260..24523b8be86afbcd4413ac81fd8e066d3686774f 100644
 --- a/net/minecraft/world/level/Level.java
 +++ b/net/minecraft/world/level/Level.java
-@@ -1759,17 +1759,20 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+@@ -1761,17 +1761,20 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
          return this.getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
      }
  
